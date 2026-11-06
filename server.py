@@ -9,6 +9,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote
 import mysql.connector
 
+import time
+ATTEMPTS = {}
+def too_many(key, limit=8, window=300):
+    """True if this key tried more than `limit` times in the last `window` seconds."""
+    now = time.time()
+    hits = [t for t in ATTEMPTS.get(key, []) if now - t < window]
+    hits.append(now); ATTEMPTS[key] = hits
+    return len(hits) > limit
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("PORT", 3000))
 DB_NAME = os.environ.get("DB_NAME", "bcts")
@@ -111,10 +120,12 @@ def api(method, path, b, tok):
         if one("SELECT 1 FROM users WHERE email=%s", (email,)): return err("An account with this email already exists. Try logging in.", 409)
         return start_session(new_user(email, name, pw, None))
     if key == "POST /api/login":
+        if too_many("login:" + email): return err("Too many attempts. Wait a few minutes and try again.", 429)
         u = one("SELECT * FROM users WHERE email=%s", (email,))
         if not u or not pw_ok(str(b.get("password") or ""), u): return err("Email or password is incorrect.")
         return start_session(u)
     if key == "POST /api/social":  # DEMO: not real Google/Facebook; the account has its own password
+        if too_many("social:" + email): return err("Too many attempts. Wait a few minutes and try again.", 429)
         pw = str(b.get("password") or "")
         if b.get("provider") not in ("google", "facebook") or not valid_email(email): return err("Enter a valid email address.")
         u = one("SELECT * FROM users WHERE email=%s", (email,))
